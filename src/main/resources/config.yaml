@@ -1,0 +1,36 @@
+# ================= 环境配置 =================
+# 对接自己的 CRM:一般只需要改本文件 + service 层的接口路径/字段 + data 下的数据文件
+
+# 验证环境:指向 tools/MockCrmServer.java 启动的本地 Mock 服务
+# 对接真实 CRM 时改成你的地址,如 http://localhost:8080
+base-url: http://localhost:18080
+
+auth:
+  username: admin
+  password: admin123
+  # 登录接口路径
+  login-path: /login
+  # 登录响应里 token 的 JSONPath,如 {"code":200,"data":{"token":"xxx"}} 就写 data.token
+  token-path: data.token
+  # token 请求头写法:默认 Authorization: Bearer xxx
+  # 若你的 CRM 直接用 "token: xxx" 之类的头,改这两项即可
+  header-name: Authorization
+  header-prefix: "Bearer "
+
+assert:
+  # 统一响应体 {code, msg, data} 的业务码字段与成功值
+  code-path: code
+  success-code: 200
+
+db:
+  # 无 MySQL 环境可设为 false,只做接口层断言;对接真实 CRM 跑数据库断言时改为 true
+  enabled: false
+  # 驱动可配置,默认 MySQL
+  driver: com.mysql.cj.jdbc.Driver
+  url: jdbc:mysql://localhost:3306/crm?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+  username: root
+  password: root
+
+api:
+  customer-path: /crm/customer
+  customer-list-path: /crm/customer/list

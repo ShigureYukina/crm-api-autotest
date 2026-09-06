@@ -1,0 +1,21 @@
+# 登录接口数据驱动:一条数据 = 一条用例
+# expectedCode 是响应体业务码的期望值(成功 200 / 失败 500),按自己 CRM 的约定调整
+- caseName: 正确账号密码登录成功
+  username: admin
+  password: admin123
+  expectedCode: 200
+
+- caseName: 密码错误
+  username: admin
+  password: wrong_password_123
+  expectedCode: 500
+
+- caseName: 用户名为空
+  username: ""
+  password: admin123
+  expectedCode: 500
+
+- caseName: 不存在的用户
+  username: no_such_user
+  password: any_password
+  expectedCode: 500
