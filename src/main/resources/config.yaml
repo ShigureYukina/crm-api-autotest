@@ -1,21 +1,25 @@
 # ================= 环境配置 =================
 # 对接自己的 CRM:一般只需要改本文件 + service 层的接口路径/字段 + data 下的数据文件
 
-# 验证环境:指向 tools/MockCrmServer.java 启动的本地 Mock 服务
-# 对接真实 CRM 时改成你的地址,如 http://localhost:8080
-base-url: http://localhost:18080
+# 被测环境:dlyk-2in1 后端(Spring Boot 3.2,默认 8089)
+base-url: http://localhost:8089
 
 auth:
   username: admin
   password: admin123
   # 登录接口路径
-  login-path: /login
-  # 登录响应里 token 的 JSONPath,如 {"code":200,"data":{"token":"xxx"}} 就写 data.token
-  token-path: data.token
-  # token 请求头写法:默认 Authorization: Bearer xxx
-  # 若你的 CRM 直接用 "token: xxx" 之类的头,改这两项即可
+  login-path: /api/login
+  # 登录请求的字段名(dlyk 用 loginAct/loginPwd;多数系统是 username/password)
+  username-field: loginAct
+  password-field: loginPwd
+  # 登录响应里 token 的 JSONPath。
+  # dlyk 的 R.OK(jwt) 把 JWT 裸字符串直接放在 data 里,所以是 data;
+  # 若你的系统是 {"code":200,"data":{"token":"xxx"}} 就写 data.token
+  token-path: data
+  # token 请求头写法:dlyk 是 Authorization: <jwt> 不带前缀,所以留空;
+  # 若是 Bearer 方案就写 "Bearer "
   header-name: Authorization
-  header-prefix: "Bearer "
+  header-prefix: ""
 
 assert:
   # 统一响应体 {code, msg, data} 的业务码字段与成功值
@@ -23,14 +27,20 @@ assert:
   success-code: 200
 
 db:
-  # 无 MySQL 环境可设为 false,只做接口层断言;对接真实 CRM 跑数据库断言时改为 true
-  enabled: false
+  # dlyk 建在 Docker 容器 dlyk-mysql 上,做落库断言时置 true
+  enabled: true
   # 驱动可配置,默认 MySQL
   driver: com.mysql.cj.jdbc.Driver
-  url: jdbc:mysql://localhost:3306/crm?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+  url: jdbc:mysql://localhost:3306/dlyk?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
   username: root
-  password: root
+  password: 1056398086
 
 api:
-  customer-path: /crm/customer
-  customer-list-path: /crm/customer/list
+  # dlyk 没有"直接新增客户"的接口,客户只能由线索转换而来
+  clue-path: /api/clue
+  clue-convert-path: /api/clue/convert
+  clue-detail-path: /api/clue/detail
+  customer-list-path: /api/customers
+  customer-detail-path: /api/customer
+  # dlyk 分页每页 10 条(后端常量 PAGE_SIZE),翻页找数据时用得上
+  page-size: 10

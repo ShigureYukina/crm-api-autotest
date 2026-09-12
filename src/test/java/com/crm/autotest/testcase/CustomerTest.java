@@ -1,60 +1,161 @@
 package com.crm.autotest.testcase;
 
 import com.crm.autotest.core.ApiAssertion;
+import com.crm.autotest.service.ClueApiService;
 import com.crm.autotest.service.CustomerApiService;
+import com.crm.autotest.utils.DbUtil;
 
 import io.restassured.response.Response;
 
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
+import java.util.List;
+import java.util.Map;
+
 /**
- * 用例层:客户模块增删改查全链路。
- * 用类内字段 customerId 在用例间传递数据(接口间数据依赖),
- * priority + dependsOnMethods 保证执行顺序且前置失败时后续用例跳过。
+ * 用例层:客户模块全链路。
+ *
+ * dlyk 的业务约束:客户不能直接新增,只能由线索转换生成;删除是逻辑删除(deleted 置 1)。
+ * 所以本类按「建线索 -> 转客户 -> 列表校验 -> 删除清理」的真实链路组织,并保留 DB 视角的落库断言,
+ * 用例收尾会把造出来的客户和线索都删掉,不污染测试库。
+ * 用类内字段 clueId / customerId 在用例间传递数据(接口间数据依赖),
+ * priority + dependsOnMethods 保证执行顺序,前置失败时后续用例自动跳过。
  */
 public class CustomerTest {
 
-    private String customerName = "自动化客户_" + System.currentTimeMillis();
+    private static final long TS = System.currentTimeMillis();
+    private static final String CLUE_NAME = "自动化客户_" + TS;
+    private static final String PHONE = "139" + String.valueOf(TS).substring(5, 13);
+
+    private Object clueId;
     private Object customerId;
 
-    @Test(priority = 1, description = "新增客户,并断言数据库落库成功")
-    public void testCreateCustomer() {
-        Response response = CustomerApiService.createCustomer(customerName, "13800001111", "接口自动化创建");
-        ApiAssertion.assertSuccess(response);
-        customerId = response.jsonPath().get("data.id");
+    @Test(priority = 1, description = "建线索 -> 转客户,并断言线索状态与客户落库")
+    public void testCreateClueAndConvertToCustomer() {
+        Response createResp = ClueApiService.createClue(CLUE_NAME, PHONE, "接口自动化造数", 1, 1);
+        ApiAssertion.assertSuccess(createResp);
 
+        // dlyk 的新增线索接口不返回线索 id,只能从 DB 反查(接口未回传主键时的常见处理方式)
+        Map<String, Object> clueRow = DbUtil.queryOne("SELECT id FROM t_clue WHERE phone = ?", PHONE);
+        Assert.assertNotNull(clueRow, "线索应已落库,phone=" + PHONE);
+        clueId = clueRow.get("id");
+        Assert.assertNotNull(clueId, "应从库中取到线索 id");
+
+        Response convertResp = ClueApiService.convertToCustomer(clueId);
+        ApiAssertion.assertSuccess(convertResp);
+
+        // 接口返回成功 != 落库正确:从 DB 视角再验一次
         ApiAssertion.assertDbCount(
-                "SELECT COUNT(*) FROM crm_customer WHERE customer_name = ?", 1, customerName);
-    }
-
-    @Test(priority = 2, dependsOnMethods = "testCreateCustomer",
-            description = "分页查询,断言新增的客户在列表中可见")
-    public void testListCustomer() {
-        Response response = CustomerApiService.listCustomers(customerName);
-        ApiAssertion.assertSuccess(response);
-        Assert.assertTrue(response.asString().contains(customerName), "列表应包含新增客户:" + customerName);
-    }
-
-    @Test(priority = 3, dependsOnMethods = "testCreateCustomer", description = "修改客户名称")
-    public void testUpdateCustomer() {
-        String newName = customerName + "_改";
-        Response response = CustomerApiService.updateCustomer(customerId, newName);
-        ApiAssertion.assertSuccess(response);
-
+                "SELECT COUNT(*) FROM t_customer WHERE clue_id = ?", 1, clueId);
         ApiAssertion.assertDbCount(
-                "SELECT COUNT(*) FROM crm_customer WHERE customer_name = ?", 1, newName);
-        customerName = newName;
+                "SELECT COUNT(*) FROM t_clue WHERE id = ? AND state = -1", 1, clueId);
+
+        // 再用接口验一次:转换后线索状态应变成 -1(已转换)
+        ApiAssertion.assertJsonPath(ClueApiService.getClueDetail(clueId), "data.state", -1);
+
+        Map<String, Object> customerRow = DbUtil.queryOne(
+                "SELECT id FROM t_customer WHERE clue_id = ?", clueId);
+        Assert.assertNotNull(customerRow, "应已生成客户记录");
+        customerId = customerRow.get("id");
     }
 
-    @Test(priority = 4, dependsOnMethods = "testUpdateCustomer",
-            description = "删除客户,并断言数据库已删除")
+    @Test(priority = 2, dependsOnMethods = "testCreateClueAndConvertToCustomer",
+            description = "翻页查询客户列表,断言新建的客户可见且姓名无乱码")
+    public void testListCustomerContainsConverted() {
+        String matchedName = findNameInCustomerList(customerId);
+        Assert.assertNotNull(matchedName, "列表应包含新建客户,customerId=" + customerId);
+        Assert.assertEquals(matchedName, CLUE_NAME, "客户姓名应与线索一致(校验中文无乱码)");
+    }
+
+    @Test(priority = 3, dependsOnMethods = "testCreateClueAndConvertToCustomer",
+            description = "业务规则:同一线索不能重复转换")
+    public void testConvertTwiceShouldFail() {
+        Response resp = ClueApiService.convertToCustomer(clueId);
+        ApiAssertion.assertCode(resp, 500);
+        ApiAssertion.assertJsonPath(resp, "msg", "该线索已被转换");
+    }
+
+    @Test(priority = 4, description = "业务规则:转换不存在的线索应失败")
+    public void testConvertNotExistClueShouldFail() {
+        Response resp = ClueApiService.convertToCustomer(999999999);
+        ApiAssertion.assertCode(resp, 500);
+        ApiAssertion.assertJsonPath(resp, "msg", "线索不存在");
+    }
+
+    /**
+     * 已知缺陷(2026-09-11 发现):GET /api/customer/{id} 稳定报 500。
+     * 根因:TCustomerMapper.java 声明了 selectCustomerDetailById,但 TCustomerMapper.xml
+     * 里没有对应的 <select>,MyBatis 抛 "Invalid bound statement"。
+     *
+     * 这里断言的是"当前确实坏掉了"这个事实,目的是让回归保持绿色同时把缺陷钉在报告里。
+     * 被测系统修好该 mapper 后,把本方法改成 ApiAssertion.assertSuccess(resp) 即可。
+     */
+    @Test(priority = 5, dependsOnMethods = "testCreateClueAndConvertToCustomer",
+            description = "[已知缺陷] 客户详情接口因 mapper 缺 statement 报 500")
+    public void testCustomerDetailKnownSutBug() {
+        Response resp = CustomerApiService.getCustomerDetail(customerId);
+        ApiAssertion.assertCode(resp, 500);
+        String msg = resp.jsonPath().getString("msg");
+        Assert.assertTrue(msg != null && msg.contains("selectCustomerDetailById"),
+                "应命中缺失的 mapper statement,实际:" + msg);
+    }
+
+    @Test(priority = 6, description = "业务规则:删除不存在的客户应失败")
+    public void testDeleteNotExistCustomerShouldFail() {
+        ApiAssertion.assertCode(CustomerApiService.deleteCustomer(999999999), 500);
+    }
+
+    @Test(priority = 7, dependsOnMethods = "testCustomerDetailKnownSutBug",
+            description = "删除客户:逻辑删除,行保留标志位翻转,且列表不再可见")
     public void testDeleteCustomer() {
-        Response response = CustomerApiService.deleteCustomer(customerId);
-        ApiAssertion.assertSuccess(response);
+        Response resp = CustomerApiService.deleteCustomer(customerId);
+        ApiAssertion.assertSuccess(resp);
 
-        // 若你的 CRM 是逻辑删除,这里应改为断言 is_deleted/deleted 标志位,而不是行数为 0
+        // 逻辑删除:行还在(deleted=1),而不是物理行数为 0
+        ApiAssertion.assertDbCount("SELECT COUNT(*) FROM t_customer WHERE id = ?", 1, customerId);
         ApiAssertion.assertDbCount(
-                "SELECT COUNT(*) FROM crm_customer WHERE customer_name = ?", 0, customerName);
+                "SELECT COUNT(*) FROM t_customer WHERE id = ? AND deleted = 1", 1, customerId);
+
+        Assert.assertNull(findNameInCustomerList(customerId),
+                "删除后客户不应再出现在列表中,customerId=" + customerId);
+    }
+
+    @Test(priority = 8, dependsOnMethods = "testDeleteCustomer",
+            description = "收尾清理:逻辑删除前置线索,不污染测试库")
+    public void testDeleteClueCleanup() {
+        Response resp = ClueApiService.deleteClue(clueId);
+        ApiAssertion.assertSuccess(resp);
+        ApiAssertion.assertDbCount(
+                "SELECT COUNT(*) FROM t_clue WHERE id = ? AND deleted = 1", 1, clueId);
+    }
+
+    /**
+     * 在客户分页列表里逐页找指定客户,返回其关联线索的姓名;找不到返回 null。
+     * dlyk 列表接口不支持关键字过滤,只能按页遍历(每页 10 条,页数由 total 推出)。
+     */
+    private String findNameInCustomerList(Object targetCustomerId) {
+        int pageSize = CustomerApiService.pageSize();
+        Response first = CustomerApiService.listCustomers(1);
+        ApiAssertion.assertSuccess(first);
+
+        int total = first.jsonPath().getInt("data.total");
+        Assert.assertTrue(total > 0, "客户总数应大于 0");
+        int totalPages = (total + pageSize - 1) / pageSize;
+
+        for (int page = 1; page <= totalPages; page++) {
+            Response resp = (page == 1) ? first : CustomerApiService.listCustomers(page);
+            ApiAssertion.assertSuccess(resp);
+            List<Map<String, Object>> rows = resp.jsonPath().getList("data.list");
+            for (Map<String, Object> row : rows) {
+                if (String.valueOf(targetCustomerId).equals(String.valueOf(row.get("id")))) {
+                    Object clueDo = row.get("clueDO");
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> clue = (Map<String, Object>) clueDo;
+                    return clue == null ? null : String.valueOf(clue.get("fullName"));
+                }
+            }
+        }
+        return null;
     }
 }

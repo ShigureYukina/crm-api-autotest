@@ -1,5 +1,7 @@
 # 登录接口数据驱动:一条数据 = 一条用例
-# expectedCode 是响应体业务码的期望值(成功 200 / 失败 500),按自己 CRM 的约定调整
+# expectedCode 是响应体业务码的期望值(dlyk 约定:成功 200 / 失败 500)
+# 注意:username/password 只是本文件的字段名,落到请求体里的实际参数名
+# 由 config.yaml 的 auth.username-field / auth.password-field 决定(dlyk 是 loginAct/loginPwd)
 - caseName: 正确账号密码登录成功
   username: admin
   password: admin123
@@ -13,6 +15,11 @@
 - caseName: 用户名为空
   username: ""
   password: admin123
+  expectedCode: 500
+
+- caseName: 密码为空
+  username: admin
+  password: ""
   expectedCode: 500
 
 - caseName: 不存在的用户
