@@ -132,20 +132,28 @@ public class CustomerTest {
 
     /**
      * 在客户分页列表里逐页找指定客户,返回其关联线索的姓名;找不到返回 null。
-     * dlyk 列表接口不支持关键字过滤,只能按页遍历(每页 10 条,页数由 total 推出)。
+     * dlyk 列表接口不支持关键字过滤,只能按页遍历(每页 10 条)。
+     *
+     * 并发注意:其它测试类在并行跑时会增删记录,导致 total 和每页内容实时变化,
+     * 所以总页数不能在循环前算一次就固定,必须每翻一页都从该页响应里重取 total。
      */
     private String findNameInCustomerList(Object targetCustomerId) {
+        // 最多 3 轮:并发下记录总数实时变化,单轮翻页可能刚好漏掉被"推页"的目标行
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            String name = scanCustomerPages(targetCustomerId);
+            if (name != null) {
+                return name;
+            }
+        }
+        return null;
+    }
+
+    private String scanCustomerPages(Object targetCustomerId) {
         int pageSize = CustomerApiService.pageSize();
-        Response first = CustomerApiService.listCustomers(1);
-        ApiAssertion.assertSuccess(first);
-
-        int total = first.jsonPath().getInt("data.total");
-        Assert.assertTrue(total > 0, "客户总数应大于 0");
-        int totalPages = (total + pageSize - 1) / pageSize;
-
-        for (int page = 1; page <= totalPages; page++) {
-            Response resp = (page == 1) ? first : CustomerApiService.listCustomers(page);
+        for (int page = 1; page <= 500; page++) {
+            Response resp = CustomerApiService.listCustomers(page);
             ApiAssertion.assertSuccess(resp);
+
             List<Map<String, Object>> rows = resp.jsonPath().getList("data.list");
             for (Map<String, Object> row : rows) {
                 if (String.valueOf(targetCustomerId).equals(String.valueOf(row.get("id")))) {
@@ -154,6 +162,12 @@ public class CustomerTest {
                     Map<String, Object> clue = (Map<String, Object>) clueDo;
                     return clue == null ? null : String.valueOf(clue.get("fullName"));
                 }
+            }
+
+            Integer total = resp.jsonPath().getInt("data.total");
+            int totalPages = (total + pageSize - 1) / pageSize;
+            if (page >= totalPages) {
+                break;
             }
         }
         return null;

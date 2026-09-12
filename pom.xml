@@ -59,6 +59,12 @@
             <artifactId>mysql-connector-java</artifactId>
             <version>${mysql.version}</version>
         </dependency>
+        <!-- Redis 直连:token 生命周期断言用(与被测系统同款 Lettuce 客户端) -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+            <version>6.3.2.RELEASE</version>
+        </dependency>
     </dependencies>
 
     <build>

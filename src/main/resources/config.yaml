@@ -21,6 +21,11 @@ auth:
   header-name: Authorization
   header-prefix: ""
 
+# Redis 直连:token 生命周期断言用(dlyk 的登录态存在 Redis,过期全靠 TTL)
+redis:
+  host: 127.0.0.1
+  port: 6379
+
 assert:
   # 统一响应体 {code, msg, data} 的业务码字段与成功值
   code-path: code
@@ -42,5 +47,14 @@ api:
   clue-detail-path: /api/clue/detail
   customer-list-path: /api/customers
   customer-detail-path: /api/customer
+  # 活动模块(市场活动,物理删除)
+  activity-path: /api/activity
+  activity-list-path: /api/activitys
+  # 交易模块(JSON 提交,阶段为字典值 id)
+  tran-path: /api/tran
+  tran-list-path: /api/trans
+  tran-stage-path: /api/tran/stage
+  tran-history-path: /api/tran/history
+  tran-remark-path: /api/tran/remark
   # dlyk 分页每页 10 条(后端常量 PAGE_SIZE),翻页找数据时用得上
   page-size: 10

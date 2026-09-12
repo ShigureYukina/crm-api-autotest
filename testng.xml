@@ -1,20 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
-<suite name="CRM接口自动化测试" verbose="1">
+<!--
+  并发执行说明:
+  - parallel="methods" + data-provider-thread-count:用例方法级并发,5 线程;
+  - TokenLifecycleTest 单独放一个 <test>:它会登出/删 Redis key,动全局登录态,
+    必须与业务用例串行,不能被并发打乱(TestNG 的 <test> 之间是串行的);
+  - 业务用例(CustomerTest/ActivityTest/TranTest/LoginTest)只读共享 token,
+    TokenManager 缓存保证并发下只登录一次。
+-->
+<suite name="CRM接口自动化测试" verbose="1"
+       parallel="methods" thread-count="5" data-provider-thread-count="2">
     <listeners>
         <!-- 全局注入失败自动重试,无需在每个 @Test 上单独声明 -->
         <listener class-name="com.crm.autotest.utils.RetryListener"/>
     </listeners>
 
-    <test name="登录模块">
+    <!-- 串行执行:登录态生命周期(会改全局登录态) -->
+    <test name="登录态生命周期" parallel="false">
         <classes>
-            <class name="com.crm.autotest.testcase.LoginTest"/>
+            <class name="com.crm.autotest.testcase.TokenLifecycleTest"/>
         </classes>
     </test>
 
-    <test name="客户模块">
+    <!-- 并发执行:业务模块 -->
+    <test name="业务模块">
         <classes>
+            <class name="com.crm.autotest.testcase.LoginTest"/>
             <class name="com.crm.autotest.testcase.CustomerTest"/>
+            <class name="com.crm.autotest.testcase.ActivityTest"/>
+            <class name="com.crm.autotest.testcase.TranTest"/>
         </classes>
     </test>
 </suite>
