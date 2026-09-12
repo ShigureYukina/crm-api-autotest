@@ -51,19 +51,9 @@ public class ActivityTest {
     @Test(priority = 3, dependsOnMethods = "testCreateActivity",
             description = "分页列表应能翻页找到新建活动")
     public void testActivityListContains() {
-        Response first = ActivityApiService.listActivities(1);
-        ApiAssertion.assertSuccess(first);
-        int total = first.jsonPath().getInt("data.total");
-        Assert.assertTrue(total > 0, "活动总数应大于 0");
-        int totalPages = (total + 10 - 1) / 10; // 每页固定 10 条
-
-        // 列表按业务排序(非创建时间倒序),新建活动可能在任意页,逐页找
-        boolean found = false;
-        for (int page = 1; page <= totalPages && !found; page++) {
-            Response resp = (page == 1) ? first : ActivityApiService.listActivities(page);
-            ApiAssertion.assertSuccess(resp);
-            found = resp.asString().contains(NAME);
-        }
+        // dependsOnMethods 只约束前置成功,不把本用例排到 testDeleteActivity 之前;
+        // methods 级并发下删除用例可能先跑,导致这里翻页找不到 → 挂到 delete 链后面
+        boolean found = scanActivityPagesFor(NAME);
         Assert.assertTrue(found, "全部分页中应包含新建活动:" + NAME);
     }
 
@@ -84,13 +74,37 @@ public class ActivityTest {
         ApiAssertion.assertCode(ActivityApiService.deleteActivity(999999999), 500);
     }
 
-    @Test(priority = 6, dependsOnMethods = "testUpdateActivity",
+    @Test(priority = 6, dependsOnMethods = {"testUpdateActivity", "testActivityListContains"},
             description = "删除活动(物理删除),断言行数清零")
     public void testDeleteActivity() {
         Response resp = ActivityApiService.deleteActivity(activityId);
         ApiAssertion.assertSuccess(resp);
         ApiAssertion.assertDbCount(
                 "SELECT COUNT(*) FROM t_activity WHERE id = ?", 0, activityId);
+    }
+
+    /**
+     * 逐页扫描活动列表找目标名称。物理删除后活动行会消失,
+     * 所以本方法只在"活动还存在"的窗口内可靠;调用方应保证此刻未删除。
+     */
+    private boolean scanActivityPagesFor(String targetName) {
+        int pageSize = 10;
+        // 最多 3 轮:并发下记录总数实时变化,单轮翻页可能刚好漏掉被"推页"的目标行
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            for (int page = 1; page <= 200; page++) {
+                Response resp = ActivityApiService.listActivities(page);
+                ApiAssertion.assertSuccess(resp);
+                if (resp.asString().contains(targetName)) {
+                    return true;
+                }
+                Integer total = resp.jsonPath().getInt("data.total");
+                int totalPages = (total + pageSize - 1) / pageSize;
+                if (page >= totalPages) {
+                    break;
+                }
+            }
+        }
+        return false;
     }
 
     /**

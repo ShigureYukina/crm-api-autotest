@@ -106,7 +106,7 @@ public class CustomerTest {
         ApiAssertion.assertCode(CustomerApiService.deleteCustomer(999999999), 500);
     }
 
-    @Test(priority = 7, dependsOnMethods = "testCustomerDetailKnownSutBug",
+    @Test(priority = 7, dependsOnMethods = {"testCustomerDetailKnownSutBug", "testListCustomerContainsConverted"},
             description = "删除客户:逻辑删除,行保留标志位翻转,且列表不再可见")
     public void testDeleteCustomer() {
         Response resp = CustomerApiService.deleteCustomer(customerId);
