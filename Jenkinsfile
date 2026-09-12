@@ -19,6 +19,14 @@ pipeline {
         string(name: 'BASE_URL', defaultValue: 'http://host.docker.internal:8089', description: '被测系统地址')
     }
 
+    environment {
+        // ConfigManager 支持环境变量覆盖 config.yaml(优先级:环境变量 > yaml)
+        // 容器内访问宿主机的 dlyk/MySQL/Redis 必须走 host.docker.internal
+        BASE_URL = 'http://host.docker.internal:8089'
+        DB_URL = 'jdbc:mysql://host.docker.internal:3306/dlyk?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8'
+        REDIS_HOST = 'host.docker.internal'
+    }
+
     stages {
         stage('检出代码') {
             steps {
